@@ -119,6 +119,8 @@ sel4utils_map_ept_page(vka_t *vka, seL4_CPtr pd, seL4_CPtr frame, seL4_Word vadd
                        seL4_CapRights rights, int cacheable, seL4_Word size_bits,
                        vka_object_t *pagetable, vka_object_t *pagedir)
 {
+    int ret;
+
     assert(vka);
     assert(pd);
     assert(frame);
@@ -134,7 +136,7 @@ sel4utils_map_ept_page(vka_t *vka, seL4_CPtr pd, seL4_CPtr frame, seL4_Word vadd
     }
 
     /* Try map into EPT directory first. */
-    int ret = seL4_X86_Page_Map(frame, pd, vaddr, rights, attr);
+    ret = seL4_X86_Page_MapEPT(frame, pd, vaddr, rights, attr);
     if (ret == seL4_NoError) {
         /* Successful! */
         return ret;
@@ -202,7 +204,7 @@ sel4utils_map_ept_page(vka_t *vka, seL4_CPtr pd, seL4_CPtr frame, seL4_Word vadd
     }
 
     /* Try to map the frame again. */
-    return seL4_X86_Page_Map(frame, pd, vaddr, rights, attr);
+    return seL4_X86_Page_MapEPT(frame, pd, vaddr, rights, attr);
 }
 
 

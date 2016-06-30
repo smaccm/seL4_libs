@@ -37,7 +37,7 @@ void vmm_sync_guest_context(vmm_vcpu_t *vcpu) {
         context.esi = vmm_read_user_context(&vcpu->guest_state, USER_CONTEXT_ESI);
         context.edi = vmm_read_user_context(&vcpu->guest_state, USER_CONTEXT_EDI);
         context.ebp = vmm_read_user_context(&vcpu->guest_state, USER_CONTEXT_EBP);
-        seL4_IA32_VCPU_WriteRegisters(vcpu->guest_vcpu, &context);
+        seL4_X86_VCPU_WriteRegisters(vcpu->guest_vcpu, &context);
         /* Sync our context */
         MACHINE_STATE_SYNC(vcpu->guest_state.machine.context);
     }

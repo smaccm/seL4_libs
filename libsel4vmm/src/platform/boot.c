@@ -72,7 +72,7 @@ static int vmm_init_vcpu(vmm_t *vmm, unsigned int vcpu_num, int priority) {
     }
 
     /* bind the VCPU to the VMM thread */
-    error = seL4_IA32_VCPU_SetTCB(vcpu->guest_vcpu, vmm->tcb);
+    error = seL4_X86_VCPU_SetTCB(vcpu->guest_vcpu, vmm->tcb);
     assert(error == seL4_NoError);
 
     vcpu->vmm = vmm;
