@@ -16,6 +16,7 @@
 #include <sel4/arch/exIPC.h>
 
 #define EXCEPT_IPC_SYS_MR_IP EXCEPT_IPC_SYS_MR_EIP
+#define ARCH_SYSCALL_INSTRUCTION_SIZE 2
 
 static inline void
 sel4utils_set_instruction_pointer(seL4_UserContext *regs, seL4_Word value)
@@ -48,7 +49,7 @@ sel4utils_set_stack_pointer(seL4_UserContext *regs, seL4_Word value)
  * number of message registers, or WriteRegisters invocation will need
  * to be manually reflected here. This is all neccessary as we need
  * to tread very carefully over our registers and stack to make this work */
-static inline int sel4utils_ia32_tcb_set_tls_base(seL4_CPtr tcb_cap, seL4_Word tls_base)
+static inline int sel4utils_ia32_tcb_set_tls_base(seL4_CPtr tcb_cap, seL4_CPtr sc_cap, seL4_Word tls_base)
 {
     /* Declared as variables since input operands cannot overlap with clobbers */
     uint32_t edi = 1; /* first message argument. 1 means 'resume_target' everything else is 0 */
@@ -102,7 +103,7 @@ static inline int sel4utils_ia32_tcb_set_tls_base(seL4_CPtr tcb_cap, seL4_Word t
     );
     /* seL4 will not actually reload our tls_base until it switches to us.
      * we can force this to happen with a yield */
-    seL4_Yield();
+    seL4_SchedContext_Yield(sc_cap);
     return seL4_MessageInfo_get_label(tag);
 }
 

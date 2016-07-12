@@ -41,23 +41,29 @@ write_ipc_buffer_user_data(vka_t *vka, vspace_t *vspace, seL4_CPtr ipc_buf, uint
     return 0;
 }
 
-int sel4utils_configure_thread(vka_t *vka, vspace_t *parent, vspace_t *alloc, seL4_CPtr fault_endpoint,
-                               uint8_t priority, seL4_CNode cspace, seL4_CapData_t cspace_root_data, sel4utils_thread_t *res)
+int sel4utils_configure_thread(simple_t *simple, vka_t *vka, vspace_t *parent, vspace_t *alloc, 
+                               seL4_CPtr fault_endpoint,
+                               uint8_t priority, seL4_CNode cspace, 
+                               seL4_CapData_t cspace_root_data, sel4utils_thread_t *res)
 {
 
     sel4utils_thread_config_t config = {
         .fault_endpoint = fault_endpoint,
         .priority = priority,
+        .mcp = priority,
+        .criticality = seL4_MinCrit,
+        .mcc = seL4_MinCrit,
         .cspace = cspace,
         .cspace_root_data = cspace_root_data,
+        .create_sc = true,
     };
 
-    return sel4utils_configure_thread_config(vka, parent, alloc, config, res);
+    return sel4utils_configure_thread_config(simple, vka, parent, alloc, config, res);
 }
 
 
 int
-sel4utils_configure_thread_config(vka_t *vka, vspace_t *parent, vspace_t *alloc,
+sel4utils_configure_thread_config(simple_t *simple, vka_t *vka, vspace_t *parent, vspace_t *alloc,
                                   sel4utils_thread_config_t config, sel4utils_thread_t *res)
 {
     memset(res, 0, sizeof(sel4utils_thread_t));
@@ -69,21 +75,54 @@ sel4utils_configure_thread_config(vka_t *vka, vspace_t *parent, vspace_t *alloc,
         return -1;
     }
 
-    res->ipc_buffer_addr = (seL4_Word) vspace_new_ipc_buffer(alloc, &res->ipc_buffer);
+    if (!config.no_ipc_buffer) {
+        res->ipc_buffer_addr = (seL4_Word) vspace_new_ipc_buffer(alloc, &res->ipc_buffer);
 
-    if (res->ipc_buffer_addr == 0) {
-        ZF_LOGE("ipc buffer allocation failed");
-        return -1;
+        if (res->ipc_buffer_addr == 0) {
+            ZF_LOGE("ipc buffer allocation failed");
+            return -1;
+        }
+
+        if (write_ipc_buffer_user_data(vka, parent, res->ipc_buffer, res->ipc_buffer_addr)) {
+            ZF_LOGE("failed to set user data word in IPC buffer");
+            return -1;
+        }
     }
 
-    if (write_ipc_buffer_user_data(vka, parent, res->ipc_buffer, res->ipc_buffer_addr)) {
-        ZF_LOGE("failed to set user data word in IPC buffer");
-        return -1;
+    if (config.create_sc) {
+        error = vka_alloc_sched_context(vka, &res->sched_context);
+        if (error) {
+            ZF_LOGE("Failed to allocate sched context");
+            sel4utils_clean_up_thread(vka, alloc, res);
+            return -1;
+        }
+
+        seL4_Time budget = CONFIG_SEL4UTILS_TIMESLICE_US;
+        seL4_Time period = CONFIG_SEL4UTILS_TIMESLICE_US;
+        if (config.custom_sched_params) {
+            budget = config.custom_budget;
+            period = config.custom_period;
+        }
+
+        error = seL4_SchedControl_Configure(simple_get_sched_ctrl(simple), 
+                                            res->sched_context.cptr, budget, period, 0);
+        if (error) {
+            ZF_LOGW("Failed to configure sched context");
+            vka_free_object(vka, &res->sched_context);
+            res->sched_context.cptr = seL4_CapNull;
+            res->own_sc = false;
+        } else {
+            res->own_sc = true;
+        }
+    } else {
+        res->sched_context.cptr = config.sched_context;
+        res->own_sc = false;
     }
 
     seL4_CapData_t null_cap_data = {{0}};
-    error = seL4_TCB_Configure(res->tcb.cptr, config.fault_endpoint, config.priority, config.cspace,
-                               config.cspace_root_data, vspace_get_root(alloc), null_cap_data, res->ipc_buffer_addr, res->ipc_buffer);
+    seL4_Prio_t prio = seL4_Prio_new(config.priority, config.mcp, config.criticality, config.mcc);
+    error = seL4_TCB_Configure(res->tcb.cptr, config.fault_endpoint, config.temporal_fault_endpoint,
+                               prio, res->sched_context.cptr, config.cspace, config.cspace_root_data, vspace_get_root(alloc), null_cap_data, res->ipc_buffer_addr, res->ipc_buffer);
 
     if (error != seL4_NoError) {
         ZF_LOGE("TCB configure failed with seL4 error code %d", error);
@@ -91,7 +130,13 @@ sel4utils_configure_thread_config(vka_t *vka, vspace_t *parent, vspace_t *alloc,
         return -1;
     }
 
-    res->stack_top = vspace_new_stack(alloc);
+    if (config.custom_stack_size) {
+        res->stack_size = config.stack_size;
+    } else {
+        res->stack_size = BYTES_TO_4K_PAGES(CONFIG_SEL4UTILS_STACK_SIZE);
+    }
+
+    res->stack_top = vspace_new_sized_stack(alloc, res->stack_size);
 
     if (res->stack_top == NULL) {
         ZF_LOGE("Stack allocation failed!");
@@ -126,12 +171,16 @@ sel4utils_clean_up_thread(vka_t *vka, vspace_t *alloc, sel4utils_thread_t *threa
         vka_free_object(vka, &thread->tcb);
     }
 
+    if (thread->sched_context.cptr != 0 && thread->own_sc) {
+        vka_free_object(vka, &thread->sched_context);
+    }
+
     if (thread->ipc_buffer_addr != 0) {
         vspace_free_ipc_buffer(alloc, (seL4_Word *) thread->ipc_buffer_addr);
     }
 
     if (thread->stack_top != 0) {
-        vspace_free_stack(alloc, thread->stack_top);
+        vspace_free_sized_stack(alloc, thread->stack_top, thread->stack_size);
     }
 
     memset(thread, 0, sizeof(sel4utils_thread_t));
@@ -199,11 +248,11 @@ fault_handler(char *name, seL4_CPtr endpoint)
 }
 
 int
-sel4utils_start_fault_handler(seL4_CPtr fault_endpoint, vka_t *vka, vspace_t *vspace,
+sel4utils_start_fault_handler(seL4_CPtr fault_endpoint, simple_t *simple, vka_t *vka, vspace_t *vspace,
                               uint8_t prio, seL4_CPtr cspace, seL4_CapData_t cap_data, char *name,
                               sel4utils_thread_t *res)
 {
-    int error = sel4utils_configure_thread(vka, vspace, vspace, 0, prio, cspace,
+    int error = sel4utils_configure_thread(simple, vka, vspace, vspace, 0, prio, cspace,
                                            cap_data, res);
 
     if (error) {

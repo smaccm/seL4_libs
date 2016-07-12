@@ -24,6 +24,7 @@
 #ifdef CONFIG_LIB_SEL4_VSPACE
 
 #include <sel4/sel4.h>
+#include <simple/simple.h>
 #include <stdbool.h>
 #include <vka/vka.h>
 
@@ -32,19 +33,47 @@
 typedef struct sel4utils_thread {
     vka_object_t tcb;
     void *stack_top;
+    size_t stack_size;
     seL4_CPtr ipc_buffer;
     seL4_Word ipc_buffer_addr;
+    vka_object_t sched_context;
+    bool own_sc;
 } sel4utils_thread_t;
 
 typedef struct sel4utils_thread_config {
     /* fault_endpoint endpoint to set as the threads fault endpoint. Can be seL4_CapNull. */
     seL4_CPtr fault_endpoint;
+    /* temporal fault_endpoint endpoint to set as the threads temporal fault endpoint. Can be seL4_CapNull. */
+    seL4_CPtr temporal_fault_endpoint;
     /* seL4 priority for the thread to be scheduled with. */
     uint8_t priority;
+    /* max priority for that the thread can create and set other threads to */
+    uint8_t mcp;
+    /* seL4 criticality for the thread to be scheduled with. */
+    uint8_t criticality;
+    /* max criticality that the thread can create and set other threads to */
+    uint8_t mcc;
     /* root of the cspace to start the thread in */
     seL4_CNode cspace;
     /* data for cspace access */
     seL4_CapData_t cspace_root_data;
+    /* true if configure should allocate a sched context -
+     * if this is set then you must also provide a simple interface to the
+     * configure call that can provide the seL4_SchedControl cap. */
+    bool create_sc;
+    /* true if that sched context should use custom params */
+    bool custom_sched_params;
+    /* the custom params */
+    seL4_Time custom_budget;
+    seL4_Time custom_period;
+    /* otherwise provide a custom scheduling context cap */
+    seL4_CPtr sched_context;
+    /* use a custom stack size? */
+    bool custom_stack_size;
+    /* custom stack size in 4k pages for this thread */
+    seL4_Word stack_size;
+    /* true if this thread should have no ipc buffer */
+    bool no_ipc_buffer;
 } sel4utils_thread_config_t;
 
 typedef struct sel4utils_checkpoint {
@@ -56,6 +85,8 @@ typedef struct sel4utils_checkpoint {
 /**
  * Configure a thread, allocating any resources required.
  *
+ * @param simple a simple that can provide the sched_ctrl cap. If create_sc is not set to true
+ *               in the thread config this is not required.
  * @param vka initialised vka to allocate objects with
  * @param parent vspace structure of the thread calling this function, used for temporary mappings
  * @param alloc initialised vspace structure to allocate virtual memory with
@@ -68,7 +99,8 @@ typedef struct sel4utils_checkpoint {
  *
  * @return 0 on success, -1 on failure. Use CONFIG_DEBUG to see error messages.
  */
-int sel4utils_configure_thread(vka_t *vka, vspace_t *parent, vspace_t *alloc, seL4_CPtr fault_endpoint,
+int sel4utils_configure_thread(simple_t *simple, vka_t *vka, vspace_t *parent, vspace_t *alloc, 
+                               seL4_CPtr fault_endpoint,
                                uint8_t priority, seL4_CNode cspace, seL4_CapData_t cspace_root_data,
                                sel4utils_thread_t *res);
 
@@ -76,7 +108,7 @@ int sel4utils_configure_thread(vka_t *vka, vspace_t *parent, vspace_t *alloc, se
 /**
  * As per sel4utils_configure_thread, but using a config struct.
  */
-int sel4utils_configure_thread_config(vka_t *vka, vspace_t *parent, vspace_t *alloc,
+int sel4utils_configure_thread_config(simple_t *simple, vka_t *vka, vspace_t *parent, vspace_t *alloc,
                                       sel4utils_thread_config_t config, sel4utils_thread_t *res);
 
 /**
@@ -188,7 +220,7 @@ void sel4utils_free_checkpoint(sel4utils_checkpoint_t *checkpoint);
  *
  * @return 0 on success.
  */
-int sel4utils_start_fault_handler(seL4_CPtr fault_endpoint, vka_t *vka, vspace_t *vspace,
+int sel4utils_start_fault_handler(seL4_CPtr fault_endpoint, simple_t *simple, vka_t *vka, vspace_t *vspace,
                                   uint8_t prio, seL4_CPtr cspace, seL4_CapData_t data, char *name, sel4utils_thread_t *res);
 
 

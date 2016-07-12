@@ -362,6 +362,14 @@ simple_get_irq_ctrl(simple_t *simple)
     return simple_init_cap(simple, seL4_CapIRQControl);
 }
 
+static inline seL4_CPtr simple_get_sched_ctrl(simple_t *simple) {
+    return simple_init_cap(simple, seL4_CapSchedControl);
+}
+
+static inline seL4_CPtr simple_get_sc(simple_t *simple) {
+    return simple_init_cap(simple, seL4_CapInitThreadSC);
+}
+
 static inline seL4_CPtr 
 simple_get_init_cap(simple_t *simple, seL4_CPtr cap)
 {

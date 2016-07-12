@@ -354,7 +354,7 @@ sel4utils_spawn_process_v(sel4utils_process_t *process, vka_t *vka, vspace_t *vs
 }
 
 int
-sel4utils_configure_process(sel4utils_process_t *process, vka_t *vka,
+sel4utils_configure_process(sel4utils_process_t *process, simple_t *simple, vka_t *vka,
                             vspace_t *vspace, uint8_t priority, const char *image_name)
 {
     sel4utils_process_config_t config = {
@@ -366,10 +366,11 @@ sel4utils_configure_process(sel4utils_process_t *process, vka_t *vka,
         .create_vspace = true,
         .create_fault_endpoint = true,
         .priority = priority,
+        .create_sc = simple != NULL,
         .asid_pool = seL4_CapInitThreadASIDPool,
     };
 
-    return sel4utils_configure_process_custom(process, vka, vspace, config);
+    return sel4utils_configure_process_custom(process, simple, vka, vspace, config);
 }
 
 static int
@@ -438,11 +439,12 @@ create_cspace(vka_t *vka, int size_bits, sel4utils_process_t *process,
     if (process->fault_endpoint.cptr != 0) {
         vka_cspace_make_path(vka, process->fault_endpoint.cptr, &src);
         slot = sel4utils_copy_cap_to_process(process, src);
-        assert(slot == SEL4UTILS_ENDPOINT_SLOT);
     } else {
         /* no fault endpoint, update slot so next will work */
+        slot++;
         allocate_next_slot(process);
     }
+    assert(slot == SEL4UTILS_ENDPOINT_SLOT);
 
     /* copy page directory cap into process cspace */
     vka_cspace_make_path(vka, process->pd.cptr, &src);
@@ -452,8 +454,10 @@ create_cspace(vka_t *vka, int size_bits, sel4utils_process_t *process,
     if (!config_set(CONFIG_X86_64)) {
         vka_cspace_make_path(vka, get_asid_pool(asid_pool), &src);
         slot = sel4utils_copy_cap_to_process(process, src);
-        assert(slot == SEL4UTILS_ASID_POOL_SLOT);
+    } else {
+        allocate_next_slot(process);
     }
+    assert(slot == SEL4UTILS_ASID_POOL_SLOT);
 
     return 0;
 }
@@ -471,9 +475,10 @@ create_fault_endpoint(vka_t *vka, sel4utils_process_t *process)
     return 0;
 }
 
+
 int 
-sel4utils_configure_process_custom(sel4utils_process_t *process, vka_t *vka,
-                                   vspace_t *spawner_vspace, sel4utils_process_config_t config)
+sel4utils_configure_process_custom(sel4utils_process_t *process, simple_t *simple,  vka_t *vka,
+                                       vspace_t *spawner_vspace, sel4utils_process_config_t config)
 {
     int error;
     sel4utils_alloc_data_t * data = NULL;
@@ -559,14 +564,34 @@ sel4utils_configure_process_custom(sel4utils_process_t *process, vka_t *vka,
 
     /* create the thread, do this *after* elf-loading so that we don't clobber
      * the required virtual memory*/
-    error = sel4utils_configure_thread(vka, spawner_vspace, &process->vspace, SEL4UTILS_ENDPOINT_SLOT,
-                                       config.priority, process->cspace.cptr, cspace_root_data, &process->thread);
+    sel4utils_thread_config_t thread_config = {
+        .fault_endpoint = process->fault_endpoint.cptr,
+        .priority = config.priority,
+        .mcp = config.priority,
+        .cspace = process->cspace.cptr,
+        .cspace_root_data = cspace_root_data,
+        .create_sc = config.create_sc,
+        .custom_sched_params = config.custom_sched_params,
+        .custom_budget = config.custom_budget,
+        .custom_period = config.custom_period,
+        .sched_context = config.sched_context
+    };
 
-    /* copy tcb cap to cspace */
+    error = sel4utils_configure_thread_config(simple, vka, spawner_vspace, &process->vspace, thread_config,
+                                              &process->thread);
+
     if (config.create_cspace) {
         cspacepath_t src;
+        UNUSED seL4_CPtr slot;
+
+        /* copy sched context cap to cspace */
+        vka_cspace_make_path(vka, process->thread.sched_context.cptr, &src);
+        slot = sel4utils_copy_cap_to_process(process, src);
+        assert(slot == SEL4UTILS_SCHED_CONTEXT_SLOT);
+       
+        /* copy tcb cap to cspace */
         vka_cspace_make_path(vka, process->thread.tcb.cptr, &src);
-        UNUSED seL4_CPtr slot = sel4utils_copy_cap_to_process(process, src);
+        slot = sel4utils_copy_cap_to_process(process, src);
         assert(slot == SEL4UTILS_TCB_SLOT);
     }
 
@@ -655,6 +680,8 @@ sel4utils_process_init_cap(seL4_CPtr cap)
         return SEL4UTILS_PD_SLOT;
     case seL4_CapInitThreadASIDPool:
         return SEL4UTILS_ASID_POOL_SLOT;
+    case seL4_CapInitThreadSC:
+        return SEL4UTILS_SCHED_CONTEXT_SLOT;
     default:
         ZF_LOGE("sel4utils does not copy this cap (%u) to new processes", cap);
         return seL4_CapNull;

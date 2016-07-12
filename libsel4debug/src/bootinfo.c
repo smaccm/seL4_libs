@@ -28,7 +28,6 @@ debug_print_bootinfo(seL4_BootInfo *info)
     ZF_LOGI("userImageFrames: [%lu --> %lu)", (long)info->userImageFrames.start, (long)info->userImageFrames.end);
     ZF_LOGI("userImagePaging: [%lu --> %lu)", (long)info->userImagePaging.start, (long)info->userImagePaging.end);
     ZF_LOGI("untypeds:        [%lu --> %lu)", (long)info->untyped.start, (long)info->untyped.end);
-    ZF_LOGI("Initial thread domain: %u\n", (int)info->initThreadDomain);
     ZF_LOGI("Initial thread cnode size: %u", info->initThreadCNodeSizeBits);
     ZF_LOGI("List of untypeds");
     ZF_LOGI("------------------");

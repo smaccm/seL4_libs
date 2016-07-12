@@ -73,11 +73,14 @@ enum sel4utils_cspace_layout {
      * in. 0 if this kernel does not support asid pools */
     SEL4UTILS_ASID_POOL_SLOT = 4,
 
+    /* This threads scheduling context */
+    SEL4UTILS_SCHED_CONTEXT_SLOT = 5,
+    
     /* the slot for this processes tcb */
-    SEL4UTILS_TCB_SLOT = 5,
+    SEL4UTILS_TCB_SLOT = 6,
 
     /* First free slot in the cspace configured by sel4utils */
-    SEL4UTILS_FIRST_FREE = 6
+    SEL4UTILS_FIRST_FREE = 7
 };
 
 typedef struct {
@@ -119,6 +122,15 @@ typedef struct {
 
     int priority;
     seL4_CPtr asid_pool;
+    /* should we create a scheduling context? */
+    bool create_sc;
+    /* if so do you want to populate it with custom params? */
+    bool custom_sched_params;
+    /* the custom params */
+    seL4_Time custom_budget;
+    seL4_Time custom_period;
+    /* if not, provide one (can be seL4_CapNull) */
+    seL4_CPtr sched_context;
 } sel4utils_process_config_t;
 
 /**
@@ -193,6 +205,8 @@ int sel4utils_spawn_process_v(sel4utils_process_t *process, vka_t *vka, vspace_t
  * won't come through correctly.
  *
  * @param process      uninitialised process struct.
+ * @param simple       a simple that can provide cap_sched_control if you want the thread to have a
+ *                     scheduling context
  * @param vka          allocator to use to allocate objects.
  * @param vspace vspace allocator for the current vspace.
  * @param priority     priority to configure the process to run as.
@@ -200,7 +214,7 @@ int sel4utils_spawn_process_v(sel4utils_process_t *process, vka_t *vka, vspace_t
  *
  * @return 0 on success, -1 on error.
  */
-int sel4utils_configure_process(sel4utils_process_t *process, vka_t *vka, vspace_t *vspace,
+int sel4utils_configure_process(sel4utils_process_t *process, simple_t *simple, vka_t *vka, vspace_t *vspace,
                                 uint8_t priority, const char *image_name);
 
 /**
@@ -213,7 +227,7 @@ int sel4utils_configure_process(sel4utils_process_t *process, vka_t *vka, vspace
  *
  * @return 0 on success, -1 on error.
  */
-int sel4utils_configure_process_custom(sel4utils_process_t *process, vka_t *target_vka,
+int sel4utils_configure_process_custom(sel4utils_process_t *process, simple_t *simple, vka_t *target_vka,
                                        vspace_t *spawner_vspace, sel4utils_process_config_t config);
 
 /**
